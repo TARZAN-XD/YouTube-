@@ -4,7 +4,6 @@ import os
 
 app = Flask(__name__)
 
-# 🎨 HTML مطور + اختيار الجودة
 HTML_PAGE = """
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -14,47 +13,58 @@ HTML_PAGE = """
   <title>🎞 محمّل يوتيوب</title>
   <style>
     body { font-family: 'Tahoma', sans-serif; background: linear-gradient(135deg,#0f2027,#203a43,#2c5364); color: #fff; text-align: center; }
-    .box { margin: 60px auto; max-width: 550px; padding: 25px; background: rgba(0,0,0,0.6); border-radius: 16px; box-shadow: 0 6px 25px rgba(0,0,0,.5); }
+    .box { margin: 60px auto; max-width: 600px; padding: 25px; background: rgba(0,0,0,0.6); border-radius: 16px; box-shadow: 0 6px 25px rgba(0,0,0,.5); }
     h1 { margin-bottom: 10px; color: #f5c542; }
-    input, select { width: 100%; padding: 12px; border: none; border-radius: 8px; margin-top: 10px; font-size: 15px; }
-    button { margin-top: 16px; padding: 12px 20px; border: none; border-radius: 8px; background: #e50914; color: white; cursor: pointer; font-size: 17px; transition: .3s; }
-    button:hover { background: #b0060f; transform: scale(1.05); }
-    #result { margin-top: 20px; font-size: 15px; }
-    a { color: #42f5da; text-decoration: none; }
-    a:hover { text-decoration: underline; }
+    input, select, button { width:100%; padding:12px; border:none; border-radius:8px; margin-top:10px; font-size:15px; }
+    input, select { background:#21262d; color:#fff; }
+    button { background:#e50914; color:white; cursor:pointer; font-weight:bold; font-size:17px; transition:.3s; }
+    button:hover { background:#b0060f; transform: scale(1.05); }
+    #result { margin-top:20px; font-size:15px; }
+    a { color:#42f5da; text-decoration:none; }
+    a:hover { text-decoration:underline; }
+    img { max-width:100%; border-radius:10px; margin-top:10px; }
   </style>
 </head>
 <body>
   <div class="box">
     <h1>🎥 محمّل يوتيوب</h1>
-    <p>ألصق رابط الفيديو واختر الجودة</p>
-    <input type="text" id="url" placeholder="https://youtube.com/..." />
-    <select id="quality">
-      <option value="high">📺 أعلى جودة</option>
-      <option value="720p">HD 720p</option>
-      <option value="360p">SD 360p</option>
-      <option value="audio">🎵 صوت MP3</option>
-    </select>
-    <button onclick="downloadVideo()">تحميل</button>
-    <div id="result"></div>
+    <input type="text" id="url" placeholder="ضع رابط الفيديو هنا ..." />
+    <button onclick="getInfo()">جلب المعلومات</button>
+    <div id="info"></div>
   </div>
 
   <script>
-    async function downloadVideo() {
+    async function getInfo() {
       const url = document.getElementById('url').value;
-      const quality = document.getElementById('quality').value;
       if(!url) return alert("❌ أدخل رابط صحيح");
-      document.getElementById('result').innerHTML = "⏳ جاري التحميل...";
+      document.getElementById('info').innerHTML = "⏳ جاري جلب المعلومات...";
       try {
-        const res = await fetch(`/download?url=${encodeURIComponent(url)}&quality=${quality}`);
+        const res = await fetch("/info?url=" + encodeURIComponent(url));
         const data = await res.json();
         if(data.success){
-          document.getElementById('result').innerHTML = `✅ <a href="${data.file}" target="_blank">اضغط هنا للتحميل</a>`;
+          let html = `<h3>${data.title}</h3><img src="${data.thumbnail}" alt="thumbnail"><select id="quality">`;
+          data.streams.forEach(s => {
+            html += `<option value="${s.itag}">${s.resolution} (${s.type})</option>`;
+          });
+          html += `</select><button onclick="downloadVideo('${url}')">تحميل</button>`;
+          document.getElementById('info').innerHTML = html;
         } else {
-          document.getElementById('result').innerHTML = "⚠️ " + data.error;
+          document.getElementById('info').innerHTML = "⚠️ لم يتم جلب البيانات";
         }
-      } catch(err){
-        document.getElementById('result').innerHTML = "⚠️ تعذر الاتصال بالخادم";
+      } catch(e){
+        document.getElementById('info').innerHTML = "⚠️ خطأ بالاتصال";
+      }
+    }
+
+    async function downloadVideo(url) {
+      const itag = document.getElementById('quality').value;
+      document.getElementById('info').innerHTML += "<p>⏳ جاري التحميل...</p>";
+      const res = await fetch(`/download?url=${encodeURIComponent(url)}&itag=${itag}`);
+      const data = await res.json();
+      if(data.success){
+        document.getElementById('info').innerHTML = `✅ <a href="${data.file}" target="_blank">اضغط هنا للتحميل</a>`;
+      } else {
+        document.getElementById('info').innerHTML = "⚠️ " + data.error;
       }
     }
   </script>
@@ -66,34 +76,36 @@ HTML_PAGE = """
 def index():
     return render_template_string(HTML_PAGE)
 
+@app.route("/info")
+def info():
+    url = request.args.get("url")
+    if not url:
+        return jsonify({"success": False})
+    try:
+        yt = YouTube(url)
+        streams = []
+        for s in yt.streams.filter(progressive=True, file_extension='mp4'):
+            streams.append({"itag": s.itag, "resolution": s.resolution, "type": "فيديو+صوت"})
+        for s in yt.streams.filter(only_audio=True):
+            streams.append({"itag": s.itag, "resolution": "صوت فقط", "type": "Audio"})
+        return jsonify({"success": True, "title": yt.title, "thumbnail": yt.thumbnail_url, "streams": streams})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
+
 @app.route("/download")
 def download():
     url = request.args.get("url")
-    quality = request.args.get("quality", "high")
-    if not url:
-        return jsonify({"success": False, "error": "missing url"})
-
+    itag = request.args.get("itag")
+    if not url or not itag:
+        return jsonify({"success": False, "error": "missing params"})
     try:
         yt = YouTube(url)
-        stream = None
-
-        if quality == "audio":
-            stream = yt.streams.filter(only_audio=True).first()
-        elif quality == "720p":
-            stream = yt.streams.filter(res="720p", progressive=True).first()
-        elif quality == "360p":
-            stream = yt.streams.filter(res="360p", progressive=True).first()
-        else:  # high
-            stream = yt.streams.get_highest_resolution()
-
-        if not stream:
-            return jsonify({"success": False, "error": "الجودة غير متوفرة"})
-
+        stream = yt.streams.get_by_itag(int(itag))
         os.makedirs("downloads", exist_ok=True)
         filename = stream.download(output_path="downloads")
 
-        # لو اختار صوت فقط، نحول الامتداد إلى mp3 (باسم فقط، بدون تحويل فعلي)
-        if quality == "audio":
+        # تحويل الصوت فقط إلى mp3
+        if stream.type == "audio":
             base, ext = os.path.splitext(filename)
             new_file = base + ".mp3"
             os.rename(filename, new_file)
